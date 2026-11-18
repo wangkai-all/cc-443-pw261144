@@ -1,0 +1,805 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>解析器插件系统</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1: #fcfcfb;
+    --surface-2: #f9f9f7;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --status-good: #0ca30c;
+    --status-warning: #fab219;
+    --status-critical: #d03b3b;
+    --gridline: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark;
+      --surface-1: #1a1a19;
+      --surface-2: #0d0d0d;
+      --text-primary: #f0efec;
+      --text-secondary: #c3c2b7;
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --gridline: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255,255,255,0.10);
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-1: #1a1a19;
+    --surface-2: #0d0d0d;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --gridline: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface-2); color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    font-size: 14px; line-height: 1.5;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; padding: 12px 24px;
+    background: var(--surface-1); border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 17px; margin: 0; }
+  header .spacer { flex: 1; }
+  nav { display: flex; gap: 4px; padding: 0 24px; background: var(--surface-1);
+        border-bottom: 1px solid var(--border); }
+  nav button {
+    background: none; border: none; color: var(--text-secondary); font: inherit;
+    padding: 10px 14px; cursor: pointer; border-bottom: 2px solid transparent;
+  }
+  nav button.active { color: var(--text-primary); border-bottom-color: var(--series-1); }
+  main { padding: 20px 24px; max-width: 1200px; margin: 0 auto; }
+  .card {
+    background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px; margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 12px; }
+  .card h3 { font-size: 13px; margin: 16px 0 8px; color: var(--text-secondary); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border);
+           vertical-align: top; }
+  th { color: var(--text-secondary); font-weight: 600; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  button.action {
+    background: var(--series-1); color: #fff; border: none; border-radius: 6px;
+    padding: 6px 12px; font: inherit; cursor: pointer;
+  }
+  button.action.secondary { background: none; color: var(--series-1);
+                            border: 1px solid var(--series-1); }
+  button.action.danger { background: var(--status-critical); }
+  button.action:disabled { opacity: 0.45; cursor: not-allowed; }
+  input, select, textarea {
+    font: inherit; color: var(--text-primary); background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px;
+  }
+  textarea { width: 100%; font-family: ui-monospace, monospace; font-size: 12px; }
+  label.field { display: inline-flex; flex-direction: column; gap: 4px;
+                font-size: 12px; color: var(--text-secondary); margin: 0 12px 10px 0; }
+  .badge { display: inline-block; padding: 1px 8px; border-radius: 999px;
+           font-size: 12px; border: 1px solid var(--border); }
+  .badge.published, .badge.pass, .badge.ok { color: var(--status-good);
+    border-color: var(--status-good); }
+  .badge.warn, .badge.empty { color: var(--text-primary); background: var(--status-warning);
+    border-color: var(--status-warning); }
+  .badge.fail, .badge.error, .badge.rolled_back { color: #fff;
+    background: var(--status-critical); border-color: var(--status-critical); }
+  .badge.draft { color: var(--text-secondary); }
+  .muted { color: var(--text-muted); }
+  .row { display: flex; gap: 16px; flex-wrap: wrap; }
+  .row > * { flex: 1; min-width: 280px; }
+  .tiles { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tile { background: var(--surface-2); border: 1px solid var(--border);
+          border-radius: 8px; padding: 10px 14px; min-width: 130px; }
+  .tile .label { font-size: 12px; color: var(--text-secondary); }
+  .tile .value { font-size: 22px; font-weight: 600; }
+  pre { background: var(--surface-2); border: 1px solid var(--border);
+        border-radius: 6px; padding: 10px; overflow: auto; font-size: 12px; }
+  .diff-add { color: var(--status-good); }
+  .diff-del { color: var(--status-critical); }
+  details { margin: 4px 0; }
+  summary { cursor: pointer; color: var(--series-1); }
+  #toast { position: fixed; bottom: 20px; right: 20px; padding: 10px 16px;
+           border-radius: 8px; background: var(--text-primary); color: var(--surface-1);
+           opacity: 0; transition: opacity 0.25s; max-width: 480px; z-index: 50; }
+  /* chart */
+  .chart-wrap { position: relative; }
+  .chart-tooltip {
+    position: absolute; pointer-events: none; background: var(--surface-1);
+    border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px;
+    font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.15); display: none; z-index: 5;
+  }
+  .chart-tooltip .v { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary);
+            margin: 4px 0 8px; }
+  .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+                margin-right: 6px; }
+  .bar { transition: filter 0.1s; }
+  .bar:hover, .bar:focus { filter: brightness(1.15); outline: none; }
+  .gray-slider { display: flex; align-items: center; gap: 8px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>解析器插件系统</h1>
+  <span class="muted">版本绑定 · 兼容报告 · 灰度 · 自动回滚 · 批次重放</span>
+  <div class="spacer"></div>
+  <button class="action secondary" id="theme-toggle">切换主题</button>
+</header>
+<nav>
+  <button data-tab="sources" class="active">来源与绑定</button>
+  <button data-tab="plugins">插件版本</button>
+  <button data-tab="compare">版本对比</button>
+  <button data-tab="batches">批次与重放</button>
+  <button data-tab="monitoring">监控与回滚</button>
+</nav>
+<main>
+  <section id="tab-sources"></section>
+  <section id="tab-plugins" hidden></section>
+  <section id="tab-compare" hidden></section>
+  <section id="tab-batches" hidden></section>
+  <section id="tab-monitoring" hidden></section>
+</main>
+<div id="toast"></div>
+
+<script>
+"use strict";
+// ---------------------------------------------------------------- helpers
+const $ = (sel, root = document) => root.querySelector(sel);
+const el = (tag, attrs = {}, ...kids) => {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs)) {
+    if (k === "class") n.className = v;
+    else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v);
+  }
+  for (const kid of kids) if (kid != null) n.append(kid);
+  return n;
+};
+const txt = s => document.createTextNode(s);
+const pct = x => (x * 100).toFixed(1) + "%";
+
+async function api(path, opts = {}) {
+  const res = await fetch("/api" + path, {
+    headers: { "Content-Type": "application/json" }, ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.detail || res.statusText);
+  return data;
+}
+function toast(msg, isErr) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.style.background = isErr ? "var(--status-critical)" : "var(--text-primary)";
+  t.style.opacity = 1;
+  setTimeout(() => t.style.opacity = 0, 3500);
+}
+async function run(fn) {
+  try { await fn(); } catch (e) { toast(e.message, true); }
+}
+function badge(text, cls) { return el("span", { class: "badge " + cls }, txt(text)); }
+function preJSON(obj) { return el("pre", {}, txt(JSON.stringify(obj, null, 2))); }
+
+// ---------------------------------------------------------------- tabs
+const loaders = {};
+document.querySelectorAll("nav button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll("main > section").forEach(s => s.hidden = true);
+    const sec = $("#tab-" + btn.dataset.tab);
+    sec.hidden = false;
+    loaders[btn.dataset.tab] && loaders[btn.dataset.tab]();
+  });
+});
+$("#theme-toggle").addEventListener("click", () => {
+  const r = document.documentElement;
+  r.dataset.theme = r.dataset.theme === "dark" ? "light" : "dark";
+});
+
+// ---------------------------------------------------------------- sources
+loaders.sources = async () => {
+  const sec = $("#tab-sources");
+  sec.replaceChildren();
+  const sources = await api("/sources");
+  const versions = await api("/plugins/versions");
+
+  const card = el("div", { class: "card" });
+  card.append(el("h2", {}, txt("来源列表")));
+  if (!sources.length) card.append(el("p", { class: "muted" }, txt("暂无来源，请先创建。")));
+  for (const s of sources) {
+    const head = el("div", {},
+      el("strong", {}, txt(`#${s.id} ${s.name} `)),
+      s.active_version
+        ? badge(`当前: ${s.active_version.name}@${s.active_version.version}`, "published")
+        : badge("未绑定版本", "draft"),
+      s.gray_version
+        ? txt(" ") : null,
+      s.gray_version
+        ? badge(`灰度: ${s.gray_version.name}@${s.gray_version.version} ${s.gray_percent}%`, "warn")
+        : null,
+    );
+    const m = s.active_metrics || {};
+    const tiles = el("div", { class: "tiles" },
+      tile("处理记录数", m.total ?? 0),
+      tile("错误率", pct(m.error_rate ?? 0) + ` / 阈值 ${pct(s.error_threshold)}`),
+      tile("空结果率", pct(m.empty_ratio ?? 0) + ` / 阈值 ${pct(s.empty_threshold)}`),
+      tile("最小样本", s.min_sample),
+    );
+    const grayCtl = el("div", { class: "gray-slider" },
+      txt("灰度比例 "),
+      (() => {
+        const slider = el("input", { type: "range", min: 0, max: 100,
+          value: s.gray_percent, disabled: s.gray_version ? null : "disabled" });
+        const label = el("span", {}, txt(s.gray_percent + "%"));
+        slider.addEventListener("change", () => run(async () => {
+          await api(`/sources/${s.id}/gray`, { method: "POST",
+            body: { percent: Number(slider.value) } });
+          toast("灰度比例已更新"); loaders.sources();
+        }));
+        slider.addEventListener("input", () => label.textContent = slider.value + "%");
+        return [slider, label];
+      })(),
+    );
+    const rollbackBtn = el("button", {
+      class: "action danger",
+      onclick: () => run(async () => {
+        const r = await api(`/sources/${s.id}/rollback`, { method: "POST" });
+        toast(`已回滚，事件 #${r.rollback_event_id}`); loaders.sources();
+      }),
+    }, txt("手动回滚"));
+    const box = el("div", { class: "card" }, head, tiles,
+      el("div", { class: "row" }, grayCtl, el("div", {}, rollbackBtn)));
+    card.append(box);
+  }
+
+  const create = el("div", { class: "card" },
+    el("h2", {}, txt("新建来源")),
+    field("名称", "src-name", "text", "orders_feed"),
+    field("错误率阈值", "src-err", "number", "0.05", "0.01"),
+    field("空结果阈值", "src-empty", "number", "0.20", "0.01"),
+    field("最小样本量", "src-min", "number", "20", "1"),
+    el("br"),
+    el("button", { class: "action", onclick: () => run(async () => {
+      await api("/sources", { method: "POST", body: {
+        name: $("#src-name").value,
+        error_threshold: Number($("#src-err").value),
+        empty_threshold: Number($("#src-empty").value),
+        min_sample: Number($("#src-min").value),
+      }});
+      toast("来源已创建"); loaders.sources();
+    }) }, txt("创建")));
+  sec.append(card, create);
+};
+function tile(label, value) {
+  return el("div", { class: "tile" },
+    el("div", { class: "label" }, txt(label)),
+    el("div", { class: "value" }, txt(String(value))));
+}
+function field(label, id, type, placeholder, step) {
+  return el("label", { class: "field" }, txt(label),
+    el("input", { id, type, placeholder, ...(step ? { step } : {}) }));
+}
+
+// ---------------------------------------------------------------- plugins
+loaders.plugins = async () => {
+  const sec = $("#tab-plugins");
+  sec.replaceChildren();
+  const versions = await api("/plugins/versions");
+  const sources = await api("/sources");
+
+  const listCard = el("div", { class: "card" }, el("h2", {}, txt("已注册版本")));
+  const table = el("table", {},
+    el("tr", {}, ...["ID", "插件", "版本", "状态", "注册时间", "操作"]
+      .map(h => el("th", {}, txt(h)))));
+  for (const v of versions) {
+    const pubBtn = el("button", { class: "action secondary" }, txt("发布…"));
+    pubBtn.addEventListener("click", () => showPublish(v, sources));
+    const specBtn = el("button", { class: "action secondary" }, txt("查看规格"));
+    specBtn.addEventListener("click", () => run(async () => {
+      const full = await api(`/plugins/versions/${v.id}`);
+      $("#spec-view").replaceChildren(
+        el("h3", {}, txt(`${full.name}@${full.version} 规格`)), preJSON(full.spec));
+    }));
+    table.append(el("tr", {},
+      el("td", {}, txt(v.id)),
+      el("td", {}, txt(v.name)),
+      el("td", {}, txt(v.version)),
+      el("td", {}, badge(v.status, v.status)),
+      el("td", { class: "muted" }, txt((v.created_at || "").slice(0, 19))),
+      el("td", {}, pubBtn, txt(" "), specBtn)));
+  }
+  listCard.append(table);
+
+  const regCard = el("div", { class: "card" },
+    el("h2", {}, txt("注册新版本")),
+    field("插件名", "pv-name", "text", "orders_csv"),
+    field("版本号", "pv-ver", "text", "1.1.0"),
+    el("h3", {}, txt("规格 JSON（parser / field_mapping / validation）")),
+    el("textarea", { id: "pv-spec", rows: 14 },
+      txt(JSON.stringify({
+        parser: { format: "delimited", delimiter: "|", trim: true,
+                  columns: ["order_id", "amount_raw", "currency", "email"] },
+        field_mapping: {
+          order_id: { target: "order_id", type: "string", required: true },
+          amount_raw: { target: "amount", type: "decimal", required: true },
+          currency: { target: "currency", type: "string", default: "USD" },
+          email: { target: "email", type: "string" },
+        },
+        validation: [
+          { field: "amount", rule: "range", min: 0 },
+          { field: "order_id", rule: "regex", pattern: "^[A-Z0-9-]+$" },
+        ],
+      }, null, 2))),
+    el("br"),
+    el("button", { class: "action", onclick: () => run(async () => {
+      await api("/plugins/versions", { method: "POST", body: {
+        name: $("#pv-name").value, version: $("#pv-ver").value,
+        spec: JSON.parse($("#pv-spec").value),
+      }});
+      toast("版本已注册（draft）"); loaders.plugins();
+    }) }, txt("注册")));
+
+  sec.append(listCard, el("div", { id: "spec-view" }),
+             el("div", { id: "publish-panel" }), regCard);
+};
+
+function showPublish(version, sources) {
+  const panel = $("#publish-panel");
+  panel.replaceChildren();
+  const srcSel = el("select", {},
+    ...sources.map(s => el("option", { value: s.id }, txt(`#${s.id} ${s.name}`))));
+  const grayIn = el("input", { type: "number", min: 0, max: 100, value: 0 });
+  const forceIn = el("input", { type: "checkbox" });
+  const reportBox = el("div");
+  const card = el("div", { class: "card" },
+    el("h2", {}, txt(`发布 ${version.name}@${version.version}`)),
+    el("div", {},
+      el("label", { class: "field" }, txt("目标来源"), srcSel),
+      el("label", { class: "field" }, txt("灰度比例 %（0 = 直接全量）"), grayIn),
+      el("label", { class: "field" }, txt("强制发布（忽略 fail 报告）"), forceIn)),
+    el("button", { class: "action secondary", onclick: () => run(async () => {
+      const r = await api(`/plugins/versions/${version.id}/compatibility?source_id=`
+        + srcSel.value, { method: "POST" });
+      const report = await api(`/compat-reports/${r.report_id}`);
+      reportBox.replaceChildren(renderReport(report));
+    }) }, txt("① 生成兼容报告")),
+    txt(" "),
+    el("button", { class: "action", onclick: () => run(async () => {
+      await api(`/plugins/versions/${version.id}/publish`, { method: "POST", body: {
+        source_id: Number(srcSel.value), gray_percent: Number(grayIn.value),
+        force: forceIn.checked,
+      }});
+      toast("已发布并绑定"); loaders.plugins();
+    }) }, txt("② 发布")),
+    reportBox);
+  panel.append(card);
+}
+
+function renderReport(r) {
+  const s = r.summary;
+  const box = el("div", {},
+    el("h3", {}, txt("兼容报告 #", String(r.id), " "), badge(r.verdict, r.verdict)),
+    el("div", { class: "tiles" },
+      tile("样本记录", s.records),
+      tile("候选错误率", pct(s.candidate_error_rate)),
+      tile("候选空结果率", pct(s.candidate_empty_ratio)),
+      tile("输出有差异的记录", s.field_diffs)),
+    el("p", {}, txt("状态翻转: "),
+      txt(Object.entries(s.status_flips).map(([k, v]) => `${k}×${v}`).join("，") || "无")),
+    el("p", {}, txt("新增字段: "),
+      ...s.added_fields.map(f => el("span", { class: "diff-add" }, txt("+" + f + " "))),
+      txt(" 移除字段: "),
+      ...s.removed_fields.map(f => el("span", { class: "diff-del" }, txt("-" + f + " ")))),
+    s.notes.length ? el("p", { class: "muted" }, txt(s.notes.join("；"))) : null,
+  );
+  if (r.diff_samples.length) {
+    const det = el("details", {},
+      el("summary", {}, txt(`差异样本（${r.diff_samples.length} 条）`)));
+    for (const d of r.diff_samples.slice(0, 10)) {
+      det.append(el("div", { class: "row" },
+        el("div", {}, el("h3", {}, txt(d.record_key + " · 基线")), preJSON(d.baseline)),
+        el("div", {}, el("h3", {}, txt(d.record_key + " · 候选")), preJSON(d.candidate))));
+    }
+    box.append(det);
+  }
+  return box;
+}
+
+// ---------------------------------------------------------------- compare
+loaders.compare = async () => {
+  const sec = $("#tab-compare");
+  sec.replaceChildren();
+  const versions = await api("/plugins/versions");
+  const opts = v => el("option", { value: v.id },
+    txt(`${v.name}@${v.version} (#${v.id})`));
+  const selA = el("select", {}, ...versions.map(opts));
+  const selB = el("select", {}, ...versions.map(opts));
+  if (versions.length > 1) selB.selectedIndex = 1;
+  const out = el("div");
+  sec.append(
+    el("div", { class: "card" },
+      el("h2", {}, txt("版本对比")),
+      el("label", { class: "field" }, txt("版本 A"), selA),
+      el("label", { class: "field" }, txt("版本 B"), selB),
+      el("button", { class: "action", onclick: () => run(async () => {
+        const data = await api(`/plugins/compare?a=${selA.value}&b=${selB.value}`);
+        out.replaceChildren(renderCompare(data));
+      }) }, txt("对比"))),
+    out);
+};
+
+function renderCompare(d) {
+  const box = el("div");
+  const sd = d.spec_diff;
+  const specCard = el("div", { class: "card" },
+    el("h2", {}, txt(`规格差异：${d.a.name}@${d.a.version} → ${d.b.name}@${d.b.version}`)));
+  if (sd.parser_changes.length) {
+    specCard.append(el("h3", {}, txt("解析器配置")),
+      el("table", {},
+        el("tr", {}, el("th", {}, txt("键")), el("th", {}, txt("A")), el("th", {}, txt("B"))),
+        ...sd.parser_changes.map(c => el("tr", {},
+          el("td", {}, txt(c.key)),
+          el("td", {}, el("code", {}, txt(JSON.stringify(c.from)))),
+          el("td", {}, el("code", {}, txt(JSON.stringify(c.to))))))));
+  }
+  const mapRows = [
+    ...sd.mapping_added.map(m => ["+ " + m.raw, "—", JSON.stringify(m), "diff-add"]),
+    ...sd.mapping_removed.map(m => ["- " + m.raw, JSON.stringify(m), "—", "diff-del"]),
+    ...sd.mapping_changed.map(m => ["~ " + m.raw, JSON.stringify(m.from),
+                                    JSON.stringify(m.to), ""]),
+  ];
+  if (mapRows.length) {
+    specCard.append(el("h3", {}, txt("字段映射")),
+      el("table", {},
+        el("tr", {}, el("th", {}, txt("原始字段")), el("th", {}, txt("A")),
+           el("th", {}, txt("B"))),
+        ...mapRows.map(([f, a, b, cls]) => el("tr", { class: cls },
+          el("td", {}, txt(f)),
+          el("td", {}, el("code", {}, txt(a))),
+          el("td", {}, el("code", {}, txt(b)))))));
+  }
+  if (sd.validation_added.length || sd.validation_removed.length) {
+    specCard.append(el("h3", {}, txt("校验规则")),
+      ...sd.validation_added.map(r => el("div", { class: "diff-add" }, txt("+ " + r))),
+      ...sd.validation_removed.map(r => el("div", { class: "diff-del" }, txt("- " + r))));
+  }
+  if (!sd.parser_changes.length && !mapRows.length
+      && !sd.validation_added.length && !sd.validation_removed.length) {
+    specCard.append(el("p", { class: "muted" }, txt("两个版本规格完全一致。")));
+  }
+  box.append(specCard);
+
+  const metCard = el("div", { class: "card" }, el("h2", {}, txt("运行指标")));
+  const mt = el("table", {},
+    el("tr", {}, ...["版本", "来源", "总数", "错误率", "空结果率"].map(h =>
+      el("th", {}, txt(h)))));
+  for (const vid of [d.a.id, d.b.id]) {
+    for (const m of d.metrics[vid] || []) {
+      mt.append(el("tr", {},
+        el("td", {}, txt(vid === d.a.id ? `${d.a.version}` : `${d.b.version}`)),
+        el("td", {}, txt("#" + m.source_id)),
+        el("td", { class: "num" }, txt(m.total)),
+        el("td", { class: "num" }, txt(pct(m.error_rate))),
+        el("td", { class: "num" }, txt(pct(m.empty_ratio)))));
+    }
+  }
+  metCard.append(mt);
+  box.append(metCard);
+
+  if (d.diff_samples.length) {
+    const det = el("details", { class: "card" },
+      el("summary", {}, txt(`已保存的差异样本（${d.diff_samples.length} 条）`)));
+    for (const s of d.diff_samples.slice(0, 10)) {
+      det.append(el("div", { class: "row" },
+        el("div", {}, el("h3", {}, txt(s.record_key + " · A")), preJSON(s.baseline)),
+        el("div", {}, el("h3", {}, txt(s.record_key + " · B")), preJSON(s.candidate))));
+    }
+    box.append(det);
+  }
+  return box;
+}
+
+// ---------------------------------------------------------------- batches
+loaders.batches = async () => {
+  const sec = $("#tab-batches");
+  sec.replaceChildren();
+  const sources = await api("/sources");
+  const versions = await api("/plugins/versions");
+  const batches = await api("/batches");
+
+  const srcSel = el("select", {},
+    ...sources.map(s => el("option", { value: s.id }, txt(`#${s.id} ${s.name}`))));
+  const upCard = el("div", { class: "card" },
+    el("h2", {}, txt("上传批次")),
+    el("label", { class: "field" }, txt("来源"), srcSel),
+    field("批次名", "batch-name", "text", "batch-001"),
+    el("textarea", { id: "batch-records", rows: 6,
+      placeholder: 'JSON 数组，如 ["A1|12.5|USD|a@b.c", ...]' }),
+    el("br"),
+    el("button", { class: "action", onclick: () => run(async () => {
+      const r = await api("/batches", { method: "POST", body: {
+        source_id: Number(srcSel.value), name: $("#batch-name").value,
+        records: JSON.parse($("#batch-records").value),
+      }});
+      toast(`批次 #${r.batch_id} 已处理 → runs [${r.run_ids}]`
+        + (r.auto_rollback_event_id ? `，触发自动回滚 #${r.auto_rollback_event_id}` : ""));
+      loaders.batches();
+    }) }, txt("上传并处理")));
+
+  const listCard = el("div", { class: "card" }, el("h2", {}, txt("批次与运行")));
+  for (const b of batches) {
+    const runsTable = el("table", {},
+      el("tr", {}, ...["run", "版本", "类型", "ok", "error", "empty", "操作"]
+        .map(h => el("th", {}, txt(h)))));
+    for (const r of b.runs) {
+      const viewBtn = el("button", { class: "action secondary" }, txt("结果"));
+      viewBtn.addEventListener("click", () => run(async () => {
+        const full = await api(`/runs/${r.id}/results`);
+        $("#results-view").replaceChildren(renderResults(full, versions));
+      }));
+      runsTable.append(el("tr", {},
+        el("td", {}, txt("#" + r.id)),
+        el("td", {}, txt(versionLabel(versions, r.version_id))),
+        el("td", {}, badge(r.kind, r.kind === "gray" ? "warn" : "draft")),
+        el("td", { class: "num" }, txt(r.stats.ok)),
+        el("td", { class: "num" }, txt(r.stats.error)),
+        el("td", { class: "num" }, txt(r.stats.empty)),
+        el("td", {}, viewBtn)));
+    }
+    const replaySel = el("select", {},
+      ...versions.map(v => el("option", { value: v.id },
+        txt(`${v.name}@${v.version}`))));
+    const replayBtn = el("button", { class: "action secondary" }, txt("重放"));
+    replayBtn.addEventListener("click", () => run(async () => {
+      const r = await api(`/batches/${b.id}/replay`, { method: "POST",
+        body: { version_id: Number(replaySel.value) } });
+      toast(`重放完成 → run #${r.run_id}`
+        + (r.auto_rollback_event_id ? `，触发自动回滚 #${r.auto_rollback_event_id}` : ""));
+      loaders.batches();
+    }));
+    listCard.append(el("div", { class: "card" },
+      el("strong", {}, txt(`#${b.id} ${b.name} `)),
+      el("span", { class: "muted" }, txt(`来源 #${b.source_id} · ${b.record_count} 条 · `
+        + (b.created_at || "").slice(0, 19))),
+      runsTable,
+      el("div", {}, txt("用指定版本重放: "), replaySel, txt(" "), replayBtn)));
+  }
+  sec.append(upCard, listCard, el("div", { id: "results-view" }));
+};
+function versionLabel(versions, id) {
+  const v = versions.find(x => x.id === id);
+  return v ? `${v.name}@${v.version}` : "#" + id;
+}
+function renderResults(run, versions) {
+  const card = el("div", { class: "card" },
+    el("h2", {}, txt(`run #${run.id} 结果（${versionLabel(versions, run.version_id)} · `
+      + `${run.kind}）`)));
+  const t = el("table", {},
+    el("tr", {}, ...["记录", "状态", "canonical（映射内字段）", "extras（未映射字段）",
+                     "错误"].map(h => el("th", {}, txt(h)))));
+  for (const r of run.results.slice(0, 200)) {
+    t.append(el("tr", {},
+      el("td", {}, el("code", {}, txt(r.record_key))),
+      el("td", {}, badge(r.status, r.status)),
+      el("td", {}, el("code", {}, txt(JSON.stringify(r.canonical)))),
+      el("td", {}, el("code", {}, txt(JSON.stringify(r.extras)))),
+      el("td", { class: "muted" }, txt(r.errors.join("；")))));
+  }
+  card.append(t);
+  return card;
+}
+
+// ---------------------------------------------------------------- monitoring
+loaders.monitoring = async () => {
+  const sec = $("#tab-monitoring");
+  sec.replaceChildren();
+  const sources = await api("/sources");
+  const versions = await api("/plugins/versions");
+  const events = await api("/rollback-events");
+
+  for (const s of sources) {
+    const metrics = await api(`/sources/${s.id}/metrics`);
+    const rows = metrics.map(m => ({
+      ...m, label: versionLabel(versions, m.version_id),
+    }));
+    const card = el("div", { class: "card" },
+      el("h2", {}, txt(`来源 #${s.id} ${s.name}`)),
+      el("div", { class: "tiles" },
+        tile("当前版本", s.active_version ? s.active_version.version : "—"),
+        tile("灰度", s.gray_version
+          ? `${s.gray_version.version} @ ${s.gray_percent}%` : "无"),
+        tile("错误率阈值", pct(s.error_threshold)),
+        tile("空结果阈值", pct(s.empty_threshold))));
+    if (rows.length) {
+      card.append(renderMetricsChart(rows, s));
+      card.append(metricsTable(rows));
+    } else {
+      card.append(el("p", { class: "muted" }, txt("尚无运行数据。")));
+    }
+    sec.append(card);
+  }
+
+  const evCard = el("div", { class: "card" }, el("h2", {}, txt("回滚事件")));
+  if (!events.length) evCard.append(el("p", { class: "muted" }, txt("暂无回滚事件。")));
+  for (const e of events) {
+    const det = el("details", {},
+      el("summary", {},
+        badge(e.trigger === "auto" ? "自动" : "手动",
+              e.trigger === "auto" ? "fail" : "warn"),
+        txt(` #${e.id} 来源#${e.source_id}：版本 ${e.from_version_id} → `
+          + `${e.to_version_id ?? "（无版本，已停用）"} · ${e.reason}`)),
+      el("p", { class: "muted" }, txt(e.created_at)),
+      el("p", {}, txt("触发时指标: "), el("code", {}, txt(JSON.stringify(e.metrics)))),
+      el("p", {}, txt(`已保留处理批次 runs: [${e.preserved_run_ids.join(", ")}]`)));
+    if (e.diff_samples.length) {
+      const ds = el("details", {},
+        el("summary", {}, txt(`差异样本（${e.diff_samples.length} 条）`)));
+      for (const d of e.diff_samples.slice(0, 8)) {
+        ds.append(el("div", { class: "row" },
+          el("div", {}, el("h3", {}, txt(d.record_key + " · 故障版本")), preJSON(d.baseline)),
+          el("div", {}, el("h3", {}, txt(d.record_key + " · 回滚目标")), preJSON(d.candidate))));
+      }
+      det.append(ds);
+    }
+    evCard.append(det);
+  }
+  sec.append(evCard);
+};
+
+function metricsTable(rows) {
+  const t = el("table", {},
+    el("tr", {}, ...["版本", "总数", "ok", "error", "empty", "错误率", "空结果率"]
+      .map(h => el("th", {}, txt(h)))),
+    ...rows.map(r => el("tr", {},
+      el("td", {}, txt(r.label)),
+      el("td", { class: "num" }, txt(r.total)),
+      el("td", { class: "num" }, txt(r.ok)),
+      el("td", { class: "num" }, txt(r.error)),
+      el("td", { class: "num" }, txt(r.empty)),
+      el("td", { class: "num" }, txt(pct(r.error_rate))),
+      el("td", { class: "num" }, txt(pct(r.empty_ratio))))));
+  return t;
+}
+
+// Grouped bar chart: per version, error rate + empty ratio vs thresholds.
+function renderMetricsChart(rows, source) {
+  const W = 680, H = 280, M = { t: 28, r: 16, b: 34, l: 52 };
+  const plotW = W - M.l - M.r, plotH = H - M.t - M.b;
+  const maxV = Math.max(
+    0.01, source.error_threshold, source.empty_threshold,
+    ...rows.map(r => Math.max(r.error_rate, r.empty_ratio))) * 1.25;
+  const yMax = Math.min(niceCeil(maxV), 1);   // rates can never exceed 100%
+  const y = v => M.t + plotH - (v / yMax) * plotH;
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("width", "100%");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "各版本错误率与空结果率对比");
+
+  const css = getComputedStyle(document.documentElement);
+  const cGrid = css.getPropertyValue("--gridline").trim();
+  const cBase = css.getPropertyValue("--baseline").trim();
+  const cMuted = css.getPropertyValue("--text-muted").trim();
+  const c1 = css.getPropertyValue("--series-1").trim();
+  const c2 = css.getPropertyValue("--series-2").trim();
+
+  // gridlines + y ticks
+  const ticks = 4;
+  for (let i = 0; i <= ticks; i++) {
+    const v = (yMax / ticks) * i, yy = y(v);
+    svg.append(svgEl("line", { x1: M.l, x2: W - M.r, y1: yy, y2: yy,
+      stroke: i === 0 ? cBase : cGrid, "stroke-width": 1 }));
+    const lab = svgEl("text", { x: M.l - 8, y: yy + 4, "text-anchor": "end",
+      "font-size": 11, fill: cMuted });
+    lab.textContent = pct(v);
+    svg.append(lab);
+  }
+
+  const slotW = plotW / rows.length;
+  const barW = Math.min(24, (slotW - 24) / 2 - 1);
+  const tooltip = el("div", { class: "chart-tooltip" });
+  const showTip = (evt, html) => {
+    tooltip.replaceChildren(...html);
+    tooltip.style.display = "block";
+    const rect = wrap.getBoundingClientRect();
+    tooltip.style.left = (evt.clientX - rect.left + 12) + "px";
+    tooltip.style.top = (evt.clientY - rect.top - 10) + "px";
+  };
+  const hideTip = () => tooltip.style.display = "none";
+
+  rows.forEach((r, i) => {
+    const cx = M.l + slotW * i + slotW / 2;
+    const series = [
+      { name: "错误率", v: r.error_rate, color: c1, x: cx - barW - 1 },
+      { name: "空结果率", v: r.empty_ratio, color: c2, x: cx + 1 },
+    ];
+    for (const s of series) {
+      const h = Math.max(0, (s.v / yMax) * plotH);
+      const bar = svgEl("path", {
+        d: roundedTop(s.x, y(s.v), barW, h, 4),
+        fill: s.color, class: "bar", tabindex: "0",
+      });
+      const tip = () => [
+        el("div", { class: "v" }, txt(pct(s.v))),
+        el("div", {}, txt(`${r.label} · ${s.name}`)),
+      ];
+      bar.addEventListener("pointermove", e => showTip(e, tip()));
+      bar.addEventListener("pointerleave", hideTip);
+      bar.addEventListener("focus", e => showTip(
+        { clientX: e.target.getBoundingClientRect().left,
+          clientY: e.target.getBoundingClientRect().top }, tip()));
+      bar.addEventListener("blur", hideTip);
+      svg.append(bar);
+      // transparent full-height hit strip over each bar slot
+      const hit = svgEl("rect", { x: s.x - 2, y: M.t, width: barW + 4,
+        height: plotH, fill: "transparent" });
+      hit.addEventListener("pointermove", e => showTip(e, tip()));
+      hit.addEventListener("pointerleave", hideTip);
+      svg.append(hit);
+    }
+    const lab = svgEl("text", { x: cx, y: H - M.b + 18, "text-anchor": "middle",
+      "font-size": 11, fill: cMuted });
+    lab.textContent = r.label;
+    svg.append(lab);
+  });
+
+  // threshold hairlines with labels
+  for (const [v, name] of [[source.error_threshold, "错误率阈值"],
+                           [source.empty_threshold, "空结果阈值"]]) {
+    const yy = y(v);
+    svg.append(svgEl("line", { x1: M.l, x2: W - M.r, y1: yy, y2: yy,
+      stroke: cMuted, "stroke-width": 1 }));
+    const lab = svgEl("text", { x: W - M.r, y: yy - 4, "text-anchor": "end",
+      "font-size": 10, fill: cMuted });
+    lab.textContent = `${name} ${pct(v)}`;
+    svg.append(lab);
+  }
+
+  const wrap = el("div", { class: "chart-wrap" });
+  const legend = el("div", { class: "legend" },
+    el("span", {}, el("span", { class: "sw", style: `background:${c1}` }), txt("错误率")),
+    el("span", {}, el("span", { class: "sw", style: `background:${c2}` }), txt("空结果率")));
+  wrap.append(legend, svg, tooltip);
+  return wrap;
+}
+function svgEl(tag, attrs) {
+  const n = document.createElementNS("http://www.w3.org/2000/svg", tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  return n;
+}
+function roundedTop(x, y, w, h, r) {
+  if (h <= 0) h = 0.5;
+  r = Math.min(r, w / 2, h);
+  return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} `
+       + `L${x + w - r},${y} Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`;
+}
+function niceCeil(v) {
+  const steps = [0.05, 0.1, 0.2, 0.25, 0.5, 1];
+  for (const s of steps) if (v <= s) return s;
+  return Math.ceil(v);
+}
+
+loaders.sources();
+</script>
+</body>
+</html>
